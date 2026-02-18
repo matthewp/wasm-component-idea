@@ -53,6 +53,28 @@ export default function watPlugin() {
         return wasmToJS(buffer);
       }
 
+      // .zig files — compile with zig targeting wasm32-freestanding
+      if (id.endsWith('.zig')) {
+        const outPath = join(tmpdir(), `vite-wasm-${Date.now()}.wasm`);
+
+        // Discover exported functions by scanning for "export fn"
+        const source = readFileSync(id, 'utf-8');
+        const exports = [...source.matchAll(/export fn (\w+)/g)].map(m => `--export=${m[1]}`);
+
+        execFileSync('zig', [
+          'build-exe',
+          '-target', 'wasm32-freestanding',
+          '-fno-entry',
+          '-O', 'ReleaseSmall',
+          `-femit-bin=${outPath}`,
+          ...exports,
+          id,
+        ]);
+
+        const buffer = readFileSync(outPath);
+        return wasmToJS(buffer);
+      }
+
       return null;
     }
   };
