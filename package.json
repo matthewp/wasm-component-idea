@@ -1,0 +1,13 @@
+{
+  "name": "wasm-idom",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0",
+    "wabt": "^1.0.36"
+  }
+}

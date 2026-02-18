@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WASM Incremental DOM</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      max-width: 640px;
+      margin: 4rem auto;
+      padding: 0 1rem;
+      color: #213547;
+    }
+    .greeting {
+      border: 2px solid #646cff;
+      border-radius: 8px;
+      padding: 1.5rem;
+    }
+    .greeting h1 { margin-top: 0; }
+    .counter {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-top: 2rem;
+      font-size: 1.5rem;
+    }
+    .counter button {
+      font-size: 1.5rem;
+      width: 2.5rem;
+      height: 2.5rem;
+      border-radius: 50%;
+      border: 2px solid #646cff;
+      background: transparent;
+      color: #213547;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .counter button:hover {
+      background: #646cff;
+      color: white;
+    }
+    .counter .count {
+      min-width: 3rem;
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+    }
+  </style>
+</head>
+<body>
+  <div id="hello"></div>
+  <div id="counter"></div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
