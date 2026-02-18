@@ -13,6 +13,6 @@ const view = dom.html(
     \\</div>
 );
 
-export fn render() void {
-    view.update(.{count});
+export fn render() u32 {
+    return view.update(.{count});
 }

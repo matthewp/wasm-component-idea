@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WASM Protocol Benchmark</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      max-width: 800px;
+      margin: 4rem auto;
+      padding: 0 1rem;
+      color: #213547;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin-top: 1rem;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 0.5rem 1rem;
+      text-align: right;
+    }
+    th { background: #f5f5f5; }
+    td:first-child, th:first-child { text-align: left; }
+    button {
+      font-size: 1.1rem;
+      padding: 0.5rem 2rem;
+      cursor: pointer;
+    }
+    .hidden-container {
+      visibility: hidden;
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 0;
+      height: 0;
+      overflow: hidden;
+    }
+  </style>
+</head>
+<body>
+  <h1>Callback vs Buffer Protocol</h1>
+  <p>Measures per-slot <code>value()</code> callbacks (N+2 crossings) vs single
+     <code>update_template()</code> buffer read (1 crossing).</p>
+  <button id="run-btn">Run</button>
+  <table id="results"></table>
+  <div id="callback-container" class="hidden-container"></div>
+  <div id="buffer-container" class="hidden-container"></div>
+  <script type="module" src="/src/bench.js"></script>
+</body>
+</html>

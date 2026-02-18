@@ -35,6 +35,6 @@ fn fullName() []u8 {
     return buf[0 .. pos + last_len];
 }
 
-export fn render() void {
-    view.update(.{fullName()});
+export fn render() u32 {
+    return view.update(.{fullName()});
 }

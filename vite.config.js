@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
-import watPlugin from './plugins/vite-plugin-wat.js';
+import zigPlugin from './plugins/vite-plugin-zig.js';
+import rustPlugin from './plugins/vite-plugin-rust.js';
 
 export default defineConfig({
-  plugins: [watPlugin()],
+  plugins: [zigPlugin(), rustPlugin()],
 });

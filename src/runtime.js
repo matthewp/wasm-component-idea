@@ -1,14 +1,17 @@
 /**
- * Creates an incremental-DOM host that WASM components call into.
+ * Creates a host that WASM components render into.
  *
- * Supports two rendering modes:
+ * Supports three rendering modes:
  *
  * 1. Incremental-DOM: the WASM module calls open_element/close_element/text/etc
  *    during every render() to describe the full DOM. The host diffs in-place.
  *
- * 2. Templates: the WASM module calls create_template/end_template during init()
- *    to define static DOM with dynamic slots. During render(), it only sends
- *    the slot values via update/value/commit — O(dynamic values) not O(nodes).
+ * 2. Host-call templates: the WASM module calls create_template/end_template
+ *    during init(), then update/value/commit during render().
+ *
+ * 3. Opcode buffer: render() returns a pointer to a u32 opcode buffer in WASM
+ *    memory. The host parses it to build DOM on first render, then reads only
+ *    the SLOT values on subsequent renders.
  */
 export function createHost(container) {
   let instance = null;
@@ -21,14 +24,21 @@ export function createHost(container) {
   // --- Event data ---
   let currentEvent = null;
 
-  // --- Template system ---
+  // --- Host-call template system ---
   const templateDefs = new Map();       // id -> instruction[]
   const templateInstances = new Map();  // id -> { slotNodes: TextNode[] }
   let recording = null;                 // non-null during template definition
 
-  // --- Template render state ---
+  // --- Host-call template render state ---
   let currentSlots = null;
   let currentSlotIndex = 0;
+
+  // --- Opcode buffer state ---
+  const opcodeSlots = []; // TextNode[] — grows on first render, reused after
+
+  // --- Component composition ---
+  // Maps child render functions to { instance, slots } for COMPONENT resolution.
+  const childMap = new Map();
 
   // --- Incremental-DOM state ---
   let stack = [];
@@ -38,6 +48,98 @@ export function createHost(container) {
 
   function readString(ptr, len) {
     return decoder.decode(new Uint8Array(memory.buffer, ptr, len));
+  }
+
+  // Process a u32 opcode buffer from WASM memory.
+  // First render: builds DOM from structural opcodes, collects slot nodes.
+  // Subsequent renders: only SLOT/COMPONENT opcodes appear.
+  function processOpcodes(bufPtr, inst, slots, parentEl) {
+    const instMemory = inst.exports.memory;
+    const mem = new Uint32Array(instMemory.buffer);
+    let i = bufPtr >> 2;
+    const buildStack = [];
+    let parent = parentEl;
+    let element = null;
+    let slotIdx = 0;
+
+    function readStr(ptr, len) {
+      return decoder.decode(new Uint8Array(instMemory.buffer, ptr, len));
+    }
+
+    while (mem[i] !== 0) {
+      switch (mem[i]) {
+        case 1: { // OPEN — ptr, len
+          const tag = readStr(mem[i + 1], mem[i + 2]);
+          const el = document.createElement(tag);
+          parent.appendChild(el);
+          buildStack.push({ parent, element });
+          parent = el;
+          element = el;
+          i += 3;
+          break;
+        }
+        case 2: // CLOSE
+          ({ parent, element } = buildStack.pop());
+          i += 1;
+          break;
+        case 3: { // ATTR — name_ptr, name_len, val_ptr, val_len
+          const name = readStr(mem[i + 1], mem[i + 2]);
+          const val = readStr(mem[i + 3], mem[i + 4]);
+          element.setAttribute(name, val);
+          i += 5;
+          break;
+        }
+        case 4: { // TEXT — ptr, len
+          const content = readStr(mem[i + 1], mem[i + 2]);
+          parent.appendChild(document.createTextNode(content));
+          i += 3;
+          break;
+        }
+        case 5: { // SLOT — ptr, len (current value)
+          const content = readStr(mem[i + 1], mem[i + 2]);
+          if (slotIdx < slots.length) {
+            const node = slots[slotIdx];
+            if (node.textContent !== content) {
+              node.textContent = content;
+            }
+          } else {
+            const node = document.createTextNode(content);
+            parent.appendChild(node);
+            slots.push(node);
+          }
+          slotIdx++;
+          i += 3;
+          break;
+        }
+        case 6: { // EVENT — type_ptr, type_len, handler_ptr, handler_len
+          const eventType = readStr(mem[i + 1], mem[i + 2]);
+          const handlerName = readStr(mem[i + 3], mem[i + 4]);
+          const el = element;
+          const handlerInst = inst;
+          el.addEventListener(eventType, (e) => {
+            currentEvent = e;
+            memory = handlerInst.exports.memory;
+            handlerInst.exports[handlerName]();
+            currentEvent = null;
+            host.render(instance);
+          });
+          i += 5;
+          break;
+        }
+        case 7: { // COMPONENT — name_ptr, name_len
+          const name = readStr(mem[i + 1], mem[i + 2]);
+          const child = childMap.get(name);
+          if (child) {
+            const childBufPtr = child.instance.exports.render();
+            processOpcodes(childBufPtr, child.instance, child.slots, parent);
+          }
+          i += 3;
+          break;
+        }
+        default:
+          return;
+      }
+    }
   }
 
   // Build real DOM from a recorded template, return slot references
@@ -83,8 +185,6 @@ export function createHost(container) {
       }
     }
 
-    // Bind events — handler name is looked up dynamically so it
-    // works even if the export is added after instantiation
     for (const { el, eventType, handlerName } of pendingEvents) {
       el.addEventListener(eventType, (e) => {
         currentEvent = e;
@@ -99,8 +199,6 @@ export function createHost(container) {
 
   const imports = {
     host: {
-      // --- Shared: work in both recording and incremental-DOM modes ---
-
       open_element(ptr, len) {
         const tag = readString(ptr, len);
 
@@ -189,7 +287,6 @@ export function createHost(container) {
           return;
         }
 
-        // Incremental-DOM mode
         const el = currentElement;
         if (!el.__wasm_handlers) el.__wasm_handlers = {};
         el.__wasm_handlers[eventType] = handlerName;
@@ -206,8 +303,6 @@ export function createHost(container) {
         }
       },
 
-      // --- Template definition (called during init) ---
-
       create_template(id) {
         recording = { id, instructions: [] };
       },
@@ -222,8 +317,6 @@ export function createHost(container) {
         templateDefs.set(recording.id, recording.instructions);
         recording = null;
       },
-
-      // --- Template render (called during render) ---
 
       update(templateId) {
         if (!templateInstances.has(templateId)) {
@@ -248,7 +341,21 @@ export function createHost(container) {
         currentSlotIndex = 0;
       },
 
-      // --- Event data ---
+      update_template(templateId, bufPtr, count) {
+        if (!templateInstances.has(templateId)) {
+          templateInstances.set(templateId, instantiateTemplate(templateId));
+        }
+        const tmpl = templateInstances.get(templateId);
+        const mem = new Uint32Array(memory.buffer, bufPtr, count * 2);
+        for (let i = 0; i < count; i++) {
+          const ptr = mem[i * 2];
+          const len = mem[i * 2 + 1];
+          const content = decoder.decode(new Uint8Array(memory.buffer, ptr, len));
+          if (tmpl.slotNodes[i].textContent !== content) {
+            tmpl.slotNodes[i].textContent = content;
+          }
+        }
+      },
 
       event_target_value(bufPtr, bufLen) {
         if (!currentEvent || !currentEvent.target) return 0;
@@ -264,27 +371,34 @@ export function createHost(container) {
   const host = {
     imports,
 
-    render(inst) {
+    render(inst, children) {
       instance = inst;
-      memory = inst.exports.memory;
+      memory = instance.exports.memory;
+
+      // Register child instances so COMPONENT opcodes can resolve them by name
+      if (children) {
+        for (const [name, child] of Object.entries(children)) {
+          childMap.set(name, { instance: child, slots: [] });
+        }
+      }
 
       if (!initialized) {
-        if (inst.exports.init) {
-          inst.exports.init();
+        if (instance.exports.init) {
+          instance.exports.init();
         }
         initialized = true;
       }
 
-      // Set up incremental-DOM state
       currentParent = container;
       currentIndex = 0;
       currentElement = null;
       stack = [];
 
-      inst.exports.render();
+      const bufPtr = instance.exports.render();
 
-      // Clean up trailing children (only for incremental-DOM components)
-      if (templateDefs.size === 0) {
+      if (bufPtr !== undefined) {
+        processOpcodes(bufPtr, instance, opcodeSlots, container);
+      } else if (templateDefs.size === 0) {
         while (currentParent.childNodes.length > currentIndex) {
           currentParent.removeChild(currentParent.lastChild);
         }

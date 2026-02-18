@@ -7,7 +7,6 @@
     "build": "vite build"
   },
   "devDependencies": {
-    "vite": "^6.0.0",
-    "wabt": "^1.0.36"
+    "vite": "^6.0.0"
   }
 }
