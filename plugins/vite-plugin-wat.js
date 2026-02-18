@@ -8,9 +8,9 @@ function wasmToJS(buffer) {
   const base64 = Buffer.from(buffer).toString('base64');
   return `
 const bytes = Uint8Array.from(atob("${base64}"), c => c.charCodeAt(0));
-export default async function init(imports) {
-  const { instance } = await WebAssembly.instantiate(bytes, imports);
-  return instance;
+const compiled = await WebAssembly.compile(bytes);
+export default function init(imports) {
+  return new WebAssembly.Instance(compiled, imports);
 }
 `;
 }
