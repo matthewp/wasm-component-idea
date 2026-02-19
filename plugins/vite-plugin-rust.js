@@ -1,18 +1,11 @@
 import { readFileSync, existsSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { tmpdir } from 'os';
-import { join, dirname } from 'path';
+import { join, resolve, dirname } from 'path';
 
-function wasmToJS(buffer) {
-  const base64 = Buffer.from(buffer).toString('base64');
-  return `
-const bytes = Uint8Array.from(atob("${base64}"), c => c.charCodeAt(0));
-const compiled = await WebAssembly.compile(bytes);
-export default function init(hostImports, otherImports) {
-  return new WebAssembly.Instance(compiled, { ...hostImports, ...otherImports });
-}
-`;
-}
+const witDir = resolve(import.meta.dirname, '..', 'wit');
+const cargobin = join(process.env.HOME, '.cargo', 'bin');
+const env = { ...process.env, PATH: `${cargobin}:${process.env.PATH}` };
 
 export default function rustPlugin() {
   return {
@@ -21,32 +14,65 @@ export default function rustPlugin() {
     load(id) {
       if (!id.endsWith('.rs')) return null;
 
-      const outPath = join(tmpdir(), `vite-wasm-${Date.now()}.wasm`);
+      const ts = Date.now();
+      const embeddedWasm = join(tmpdir(), `vite-rust-${ts}.embedded.wasm`);
+      const componentWasm = join(tmpdir(), `vite-rust-${ts}.component.wasm`);
+      const outDir = join(tmpdir(), `vite-rust-${ts}-out`);
+
       const source = readFileSync(id, 'utf-8');
 
-      const args = [
-        '--target', 'wasm32-unknown-unknown',
-        '--crate-type', 'cdylib',
-        '--edition', '2021',
-        '-C', 'opt-level=s',
-        '-C', 'lto=yes',
-        '-C', 'strip=symbols',
-        '-o', outPath,
-      ];
-
-      if (source.includes('wasm_html_macro')) {
-        const macroDir = join(dirname(id), '..', '..', 'wasm-html-macro');
-        if (existsSync(macroDir)) {
-          execFileSync('cargo', ['build', '--release'], { cwd: macroDir });
-          const libPath = join(macroDir, 'target/release/libwasm_html_macro.so');
-          args.push('--extern', `wasm_html_macro=${libPath}`);
-        }
+      const crateDir = findCargoProject(dirname(id));
+      if (!crateDir) {
+        throw new Error(`No Cargo.toml found for ${id}`);
       }
 
-      args.push(id);
-      execFileSync('rustc', args);
+      // 1. Build with Cargo
+      execFileSync('cargo', ['build', '--target', 'wasm32-unknown-unknown', '--release'], {
+        cwd: crateDir, env,
+      });
 
-      return wasmToJS(readFileSync(outPath));
+      const crateName = getCrateName(crateDir);
+      const coreWasm = join(crateDir, 'target/wasm32-unknown-unknown/release', `${crateName}.wasm`);
+
+      // Determine world from source
+      let world = 'pure-component';
+      if (source.includes('"counter-app"')) world = 'counter-app';
+      else if (source.includes('"rust-counter"')) world = 'rust-counter';
+
+      // 2. Embed WIT
+      execFileSync('wasm-tools', [
+        'component', 'embed', witDir, '--world', world,
+        coreWasm, '-o', embeddedWasm, '--encoding', 'utf8',
+      ], { env });
+
+      // 3. Create component
+      execFileSync('wasm-tools', ['component', 'new', embeddedWasm, '-o', componentWasm], { env });
+
+      // 4. Transpile with jco (inline wasm as base64)
+      execFileSync('npx', [
+        'jco', 'transpile', componentWasm,
+        '-o', outDir,
+        '--name', 'component',
+        '--no-nodejs-compat',
+        '-b', '10000000',
+        '-q',
+      ], { env });
+
+      return readFileSync(join(outDir, 'component.js'), 'utf-8');
     }
   };
+}
+
+function findCargoProject(dir) {
+  while (dir !== '/') {
+    if (existsSync(join(dir, 'Cargo.toml'))) return dir;
+    dir = dirname(dir);
+  }
+  return null;
+}
+
+function getCrateName(crateDir) {
+  const toml = readFileSync(join(crateDir, 'Cargo.toml'), 'utf-8');
+  const match = toml.match(/name\s*=\s*"([^"]+)"/);
+  return match ? match[1].replace(/-/g, '_') : 'unknown';
 }

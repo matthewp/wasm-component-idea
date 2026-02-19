@@ -1,0 +1,11 @@
+[package]
+name = "rust-counter"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+wit-bindgen = "0.41"
+wasm-html-macro = { path = "../wasm-html-macro" }
+
+[lib]
+crate-type = ["cdylib"]

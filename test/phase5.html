@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WASM Component Protocol</title>
+  <title>Phase 5: Component Model Runtime</title>
   <style>
     body {
       font-family: system-ui, sans-serif;
@@ -12,13 +12,6 @@
       padding: 0 1rem;
       color: #213547;
     }
-.counter-app {
-      margin-top: 2rem;
-      border: 2px solid #646cff;
-      border-radius: 8px;
-      padding: 1.5rem;
-    }
-    .counter-app h2 { margin-top: 0; }
     .counter {
       display: flex;
       align-items: center;
@@ -48,30 +41,36 @@
       text-align: center;
       font-variant-numeric: tabular-nums;
     }
-    .fullname {
+    section {
       margin-top: 2rem;
       border: 2px solid #646cff;
       border-radius: 8px;
       padding: 1.5rem;
-      display: flex;
-      flex-direction: column;
-      gap: 0.75rem;
     }
-    .fullname input {
-      padding: 0.4rem 0.6rem;
-      border: 1px solid #ccc;
-      border-radius: 4px;
-      font-size: 1rem;
-    }
-    .fullname .result {
-      margin: 0;
-      font-size: 1.25rem;
-      min-height: 1.5em;
-    }
+    section h2 { margin-top: 0; }
   </style>
 </head>
 <body>
+  <h1>WASM Component Model</h1>
   <div id="app"></div>
-  <script type="module" src="/src/main.js"></script>
+  <script type="module">
+    import { createHost } from '../src/runtime.js';
+    import { renderer as zigCounter } from './counter-out/counter.component.js';
+    import { renderer as rustCounter } from './rust-counter-out/rust-counter.component.js';
+
+    const host = createHost(document.getElementById('app'));
+
+    // Mount Zig counter
+    const zigSection = document.createElement('section');
+    zigSection.innerHTML = '<h2>Zig Counter</h2>';
+    document.getElementById('app').appendChild(zigSection);
+    host.mount(zigCounter, zigSection);
+
+    // Mount Rust counter
+    const rustSection = document.createElement('section');
+    rustSection.innerHTML = '<h2>Rust Counter</h2>';
+    document.getElementById('app').appendChild(rustSection);
+    host.mount(rustCounter, rustSection);
+  </script>
 </body>
 </html>

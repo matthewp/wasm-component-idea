@@ -1,3 +1,9 @@
 node_modules/
 dist/
+target/
 wasm-html-macro/target/
+src/bindings/
+test/*.wasm
+test/*-out/
+test/out/
+test/*-node/

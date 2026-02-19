@@ -1,0 +1,58 @@
+package wasm-components:dom@0.1.0;
+
+interface types {
+    variant opcode {
+        open(string),
+        close,
+        attr(tuple<string, string>),
+        text(string),
+        slot(string),
+        event(tuple<string, string>),
+        child(string),
+    }
+}
+
+interface renderer {
+    use types.{opcode};
+    render: func() -> list<opcode>;
+    handle-event: func(handler: string);
+}
+
+interface host {
+    event-target-value: func() -> string;
+}
+
+world leaf-component {
+    import host;
+    export renderer;
+}
+
+world pure-component {
+    export renderer;
+}
+
+interface zig-child {
+    use types.{opcode};
+    render: func() -> list<opcode>;
+    handle-event: func(handler: string);
+}
+
+interface rust-child {
+    use types.{opcode};
+    render: func() -> list<opcode>;
+    handle-event: func(handler: string);
+}
+
+world zig-counter {
+    export zig-child;
+}
+
+world rust-counter {
+    export rust-child;
+}
+
+world counter-app {
+    import zig-child;
+    import rust-child;
+    export renderer;
+}

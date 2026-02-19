@@ -7,6 +7,7 @@
     "build": "vite build"
   },
   "devDependencies": {
+    "@bytecodealliance/jco": "^1.17.0",
     "vite": "^6.0.0"
   }
 }

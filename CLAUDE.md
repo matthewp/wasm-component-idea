@@ -1,36 +1,39 @@
 # WASM Component Protocol
 
-We are building a **protocol** and a **runtime** for that protocol. The protocol defines how WASM components describe DOM via an opcode buffer.
+We are building a **protocol** and a **runtime** for that protocol. Components describe DOM via a WIT-defined opcode variant, using the WebAssembly Component Model for cross-language interop and composition.
 
 ## Architecture Rules
 
-1. **Host imports are the protocol.** The only functions the host provides to WASM modules are the ones defined by the protocol: the opcode-based rendering interface and `event_target_value`. Do NOT add custom host functions without discussing with me first.
+1. **The WIT interface is the protocol.** All component interaction is defined in `wit/dom.wit`. Components export `render() -> list<opcode>` and `handle-event(handler: string)`. Do NOT add custom host functions without discussing with me first.
 
-2. **Vite plugin must be minimal.** It compiles source files to WASM and wraps them as JS modules. That's it. The plugin is a prototype build tool, not part of the architecture. Do not add complexity to the build to solve runtime problems.
+2. **Vite plugins must be minimal.** They compile source to WASM, run `wasm-tools` embed/new, and `jco transpile`. The plugins are a prototype build tool, not part of the architecture.
 
-3. **Use standard WASM APIs only.** WASM has imports, exports, memory, tables — use those. Do not invent custom APIs or conventions on top. If you think a new API is needed, discuss it first.
+3. **Use the Component Model.** Cross-language composition, memory isolation, and string serialization are handled by the canonical ABI. Do not invent custom conventions on top.
 
-4. **render() is a pure function.** It returns a pointer to a u32 opcode buffer in linear memory. The host reads it. No side effects, no host calls during render.
+4. **render() is a pure function.** It returns a `list<opcode>`. No side effects, no host calls during render.
 
-## Opcode Protocol
+## WIT Protocol (`wit/dom.wit`)
 
-All values are u32-aligned. Format: opcode followed by arguments.
-
-- `1` OPEN — tag_ptr, tag_len
-- `2` CLOSE
-- `3` ATTR — name_ptr, name_len, val_ptr, val_len
-- `4` TEXT — ptr, len
-- `5` SLOT — ptr, len
-- `6` EVENT — type_ptr, type_len, handler_ptr, handler_len
-- `7` COMPONENT — (args TBD, composition design not finalized)
-- `0` END
+```wit
+variant opcode {
+    open(string),
+    close,
+    attr(tuple<string, string>),
+    text(string),
+    slot(string),
+    event(tuple<string, string>),
+}
+```
 
 ## Project Structure
 
-- `src/runtime.js` — Host runtime that processes opcode buffers
-- `src/components/dom.zig` — Comptime HTML parser and opcode buffer generator
+- `wit/dom.wit` — WIT interface definitions (types, renderer, host, child interfaces, worlds)
+- `src/runtime.js` — Host runtime that processes structured JS opcode objects from jco
+- `src/components/dom.zig` — Comptime HTML parser producing canonical ABI opcode structs
 - `src/components/*.zig` — Zig components
-- `src/components/*.rs` — Rust components
-- `src/components/*.wat` — WAT components
-- `plugins/vite-plugin-wat.js` — Minimal build plugin
-- `wasm-html-macro/` — Rust proc macro for HTML templates
+- `rust-counter/` — Rust standalone counter (pure-component world)
+- `rust-counter-child/` — Rust child counter (rust-counter world, for composition)
+- `rust-counter-app/` — Rust parent component (counter-app world, composes children)
+- `plugins/vite-plugin-zig.js` — Zig build plugin (zig → embed → new → jco transpile)
+- `plugins/vite-plugin-rust.js` — Rust build plugin (cargo → embed → new → jco transpile)
+- `build.sh` — Standalone build script for all components and composition

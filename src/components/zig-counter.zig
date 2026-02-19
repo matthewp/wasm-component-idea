@@ -31,17 +31,15 @@ fn handleEvent(name_ptr: [*]const u8, name_len: u32) void {
     }
 }
 
-// --- Canonical ABI exports ---
+// --- Canonical ABI exports for zig-child interface ---
 
-export fn @"wasm-components:dom/renderer@0.1.0#render"() [*]u8 {
+export fn @"wasm-components:dom/zig-child@0.1.0#render"() [*]u8 {
     return dom.renderExport(render());
 }
 
-export fn @"wasm-components:dom/renderer@0.1.0#handle-event"(name_ptr: [*]const u8, name_len: u32) void {
+export fn @"wasm-components:dom/zig-child@0.1.0#handle-event"(name_ptr: [*]const u8, name_len: u32) void {
     dom.resetHeap();
     handleEvent(name_ptr, name_len);
 }
 
-export fn @"cabi_post_wasm-components:dom/renderer@0.1.0#render"(_: [*]u8) void {
-    // Static memory — nothing to free
-}
+export fn @"cabi_post_wasm-components:dom/zig-child@0.1.0#render"(_: [*]u8) void {}

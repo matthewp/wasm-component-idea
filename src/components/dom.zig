@@ -1,9 +1,30 @@
 const std = @import("std");
 
-// Host imports — only needed for reading DOM state back into WASM.
-const host = struct {
-    extern "host" fn event_target_value(buf: [*]u8, buf_len: u32) u32;
+// --- Canonical ABI opcode layout ---
+// Each opcode is 20 bytes (5 x u32), matching the WIT variant:
+//   variant opcode { open(string), close, attr(tuple<string,string>),
+//                    text(string), slot(string), event(tuple<string,string>) }
+//
+// Layout: [tag:u8][pad:3][f0_ptr:u32][f0_len:u32][f1_ptr:u32][f1_len:u32]
+
+pub const Opcode = extern struct {
+    tag: u8,
+    _pad1: u8 = 0,
+    _pad2: u8 = 0,
+    _pad3: u8 = 0,
+    f0_ptr: u32 = 0,
+    f0_len: u32 = 0,
+    f1_ptr: u32 = 0,
+    f1_len: u32 = 0,
 };
+
+pub const OP_OPEN: u8 = 0;
+pub const OP_CLOSE: u8 = 1;
+pub const OP_ATTR: u8 = 2;
+pub const OP_TEXT: u8 = 3;
+pub const OP_SLOT: u8 = 4;
+pub const OP_EVENT: u8 = 5;
+pub const OP_CHILD: u8 = 6;
 
 // --- Comptime HTML parser ---
 
@@ -110,51 +131,21 @@ fn parseHtml(comptime src: []const u8) []const Inst {
     }
 }
 
-// --- Opcodes ---
-// All values are u32 for alignment. Format: opcode followed by arguments.
-
-const OP_OPEN: u32 = 1; // ptr, len
-const OP_CLOSE: u32 = 2; // (no args)
-const OP_ATTR: u32 = 3; // name_ptr, name_len, val_ptr, val_len
-const OP_TEXT: u32 = 4; // ptr, len
-const OP_SLOT: u32 = 5; // ptr, len (current value)
-const OP_EVENT: u32 = 6; // type_ptr, type_len, handler_ptr, handler_len
-const OP_COMPONENT: u32 = 7; // name_ptr, name_len
-// 0 = END
+// --- Public API ---
 
 const STR_BUF_SIZE = 20;
 
-fn instrSize(tag: Tag) usize {
-    return switch (tag) {
-        .open => 3,
-        .close => 1,
-        .attr => 5,
-        .txt => 3,
-        .slot_marker => 3,
-        .event => 5,
-        .component => 3,
-    };
-}
-
-// --- Public API ---
-
-/// Read the current event's target.value into the provided buffer.
-/// Returns the number of bytes written.
-pub fn eventTargetValue(buf: [*]u8, len: u32) u32 {
-    return host.event_target_value(buf, len);
-}
-
 /// Parse an HTML template at compile time. Returns a type with an `update`
-/// method that writes an opcode buffer and returns a pointer to it.
+/// method that fills an opcode array and returns a pointer + length.
 pub fn html(comptime template: []const u8) type {
     const instrs = comptime parseHtml(template);
 
-    const buf_size = comptime blk: {
-        var size: usize = 0;
-        for (instrs) |ins| {
-            size += instrSize(ins.tag);
+    const opcode_count = comptime blk: {
+        var count: usize = 0;
+        for (instrs) |_| {
+            count += 1;
         }
-        break :blk size + 1; // +1 for END sentinel
+        break :blk count;
     };
 
     const slot_count = comptime blk: {
@@ -165,118 +156,86 @@ pub fn html(comptime template: []const u8) type {
         break :blk count;
     };
 
-    // Precompute the u32 index in buf where each slot's ptr field lives.
-    const slot_offsets = comptime blk: {
-        var offsets: [slot_count]usize = undefined;
-        var pos: usize = 0;
+    // Map from slot index to opcode array index
+    const slot_positions = comptime blk: {
+        var positions: [slot_count]usize = undefined;
         var si: usize = 0;
-        for (instrs) |ins| {
+        for (instrs, 0..) |ins, i| {
             if (ins.tag == .slot_marker) {
-                offsets[si] = pos + 1; // +1 skips the opcode
+                positions[si] = i;
                 si += 1;
             }
-            pos += instrSize(ins.tag);
         }
-        break :blk offsets;
+        break :blk positions;
     };
 
     return struct {
-        var defined: bool = false;
-        var buf: [buf_size]u32 = [_]u32{0} ** buf_size;
-        var str_bufs: [slot_count][STR_BUF_SIZE]u8 = undefined;
+        var opcodes: [opcode_count]Opcode = undefined;
+        var initialized: bool = false;
+        var str_bufs: [if (slot_count == 0) 1 else slot_count][STR_BUF_SIZE]u8 = undefined;
 
-        pub fn update(values: anytype) u32 {
-            const fields = @typeInfo(@TypeOf(values)).@"struct".fields;
-
-            if (!defined) {
-                defined = true;
-                var pos: usize = 0;
+        pub fn update(values: anytype) OpcodeList {
+            if (!initialized) {
+                initialized = true;
+                comptime var idx: usize = 0;
                 inline for (instrs) |ins| {
-                    switch (ins.tag) {
-                        .open => {
-                            buf[pos] = OP_OPEN;
-                            buf[pos + 1] = @intFromPtr(ins.a.ptr);
-                            buf[pos + 2] = @intCast(ins.a.len);
-                            pos += 3;
+                    opcodes[idx] = switch (ins.tag) {
+                        .open => Opcode{
+                            .tag = OP_OPEN,
+                            .f0_ptr = @intFromPtr(ins.a.ptr),
+                            .f0_len = @intCast(ins.a.len),
                         },
-                        .close => {
-                            buf[pos] = OP_CLOSE;
-                            pos += 1;
+                        .close => Opcode{ .tag = OP_CLOSE },
+                        .attr => Opcode{
+                            .tag = OP_ATTR,
+                            .f0_ptr = @intFromPtr(ins.a.ptr),
+                            .f0_len = @intCast(ins.a.len),
+                            .f1_ptr = @intFromPtr(ins.b.ptr),
+                            .f1_len = @intCast(ins.b.len),
                         },
-                        .attr => {
-                            buf[pos] = OP_ATTR;
-                            buf[pos + 1] = @intFromPtr(ins.a.ptr);
-                            buf[pos + 2] = @intCast(ins.a.len);
-                            buf[pos + 3] = @intFromPtr(ins.b.ptr);
-                            buf[pos + 4] = @intCast(ins.b.len);
-                            pos += 5;
+                        .txt => Opcode{
+                            .tag = OP_TEXT,
+                            .f0_ptr = @intFromPtr(ins.a.ptr),
+                            .f0_len = @intCast(ins.a.len),
                         },
-                        .txt => {
-                            buf[pos] = OP_TEXT;
-                            buf[pos + 1] = @intFromPtr(ins.a.ptr);
-                            buf[pos + 2] = @intCast(ins.a.len);
-                            pos += 3;
+                        .slot_marker => Opcode{ .tag = OP_SLOT },
+                        .event => Opcode{
+                            .tag = OP_EVENT,
+                            .f0_ptr = @intFromPtr(ins.a.ptr),
+                            .f0_len = @intCast(ins.a.len),
+                            .f1_ptr = @intFromPtr(ins.b.ptr),
+                            .f1_len = @intCast(ins.b.len),
                         },
-                        .slot_marker => {
-                            buf[pos] = OP_SLOT;
-                            pos += 3; // ptr and len filled below
+                        .component => Opcode{
+                            .tag = OP_CHILD,
+                            .f0_ptr = @intFromPtr(ins.a.ptr),
+                            .f0_len = @intCast(ins.a.len),
                         },
-                        .event => {
-                            buf[pos] = OP_EVENT;
-                            buf[pos + 1] = @intFromPtr(ins.a.ptr);
-                            buf[pos + 2] = @intCast(ins.a.len);
-                            buf[pos + 3] = @intFromPtr(ins.b.ptr);
-                            buf[pos + 4] = @intCast(ins.b.len);
-                            pos += 5;
-                        },
-                        .component => {
-                            buf[pos] = OP_COMPONENT;
-                            buf[pos + 1] = @intFromPtr(ins.a.ptr);
-                            buf[pos + 2] = @intCast(ins.a.len);
-                            pos += 3;
-                        },
-                    }
-                }
-                // Fill slot values
-                var idx: u32 = 0;
-                inline for (fields) |field| {
-                    writeSlot(slot_offsets[idx], idx, @field(values, field.name));
+                    };
                     idx += 1;
                 }
-                buf[pos] = 0; // END
-                return @intFromPtr(&buf);
             }
 
-            // Subsequent renders: SLOT and COMPONENT opcodes only
-            var pos: usize = 0;
-            var idx: u32 = 0;
+            // Update slot values
+            const fields = @typeInfo(@TypeOf(values)).@"struct".fields;
+            comptime var si: u32 = 0;
             inline for (fields) |field| {
-                buf[pos] = OP_SLOT;
-                writeSlot(pos + 1, idx, @field(values, field.name));
-                pos += 3;
-                idx += 1;
+                writeSlot(slot_positions[si], si, @field(values, field.name));
+                si += 1;
             }
-            inline for (instrs) |ins| {
-                if (ins.tag == .component) {
-                    buf[pos] = OP_COMPONENT;
-                    buf[pos + 1] = @intFromPtr(ins.a.ptr);
-                    buf[pos + 2] = @intCast(ins.a.len);
-                    pos += 3;
-                }
-            }
-            buf[pos] = 0; // END
-            return @intFromPtr(&buf);
+
+            return .{ .ptr = &opcodes, .len = opcode_count };
         }
 
-        fn writeSlot(off: usize, idx: u32, val: anytype) void {
+        fn writeSlot(opcode_idx: usize, slot_idx: u32, val: anytype) void {
             const T = @TypeOf(val);
             if (T == i32) {
-                const len = formatInt(&str_bufs[idx], val);
-                buf[off] = @intFromPtr(&str_bufs[idx]);
-                buf[off + 1] = len;
+                const len = formatInt(&str_bufs[slot_idx], val);
+                opcodes[opcode_idx].f0_ptr = @intFromPtr(&str_bufs[slot_idx]);
+                opcodes[opcode_idx].f0_len = len;
             } else if (T == []const u8 or T == []u8) {
-                buf[off] = @intFromPtr(val.ptr);
-                buf[off + 1] = @intCast(val.len);
+                opcodes[opcode_idx].f0_ptr = @intFromPtr(val.ptr);
+                opcodes[opcode_idx].f0_len = @intCast(val.len);
             } else {
                 @compileError("unsupported slot value type");
             }
@@ -308,4 +267,37 @@ pub fn html(comptime template: []const u8) type {
             return start + digits;
         }
     };
+}
+
+pub const OpcodeList = struct {
+    ptr: [*]const Opcode,
+    len: usize,
+};
+
+// --- Canonical ABI helpers ---
+
+var ret_area: [2]u32 align(4) = undefined;
+
+/// Wrap a render function for canonical ABI export.
+/// Returns a pointer to ret_area containing [list_ptr, list_len].
+pub fn renderExport(result: OpcodeList) [*]u8 {
+    ret_area[0] = @intFromPtr(result.ptr);
+    ret_area[1] = @intCast(result.len);
+    return @ptrCast(&ret_area);
+}
+
+// Bump allocator for cabi_realloc (host-provided string parameters)
+var heap: [4096]u8 = undefined;
+var heap_pos: usize = 0;
+
+pub fn resetHeap() void {
+    heap_pos = 0;
+}
+
+export fn cabi_realloc(_: ?[*]u8, _: usize, alignment: usize, new_size: usize) [*]u8 {
+    if (new_size == 0) return @ptrFromInt(alignment);
+    const mask = alignment - 1;
+    const aligned = (heap_pos + mask) & ~mask;
+    heap_pos = aligned + new_size;
+    return @ptrCast(&heap[aligned]);
 }
