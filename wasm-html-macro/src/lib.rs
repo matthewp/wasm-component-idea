@@ -15,6 +15,7 @@ enum Inst {
     Event(String, String),
     Text(String),
     Slot(String),
+    Component(String),
 }
 
 fn instr_size(inst: &Inst) -> usize {
@@ -23,6 +24,7 @@ fn instr_size(inst: &Inst) -> usize {
         Inst::Close => 1,
         Inst::Attr(_, _) | Inst::Event(_, _) => 5,
         Inst::Text(_) | Inst::Slot(_) => 3,
+        Inst::Component(_) => 3,
     }
 }
 
@@ -66,6 +68,18 @@ fn unquote(s: &str) -> String {
     }
 }
 
+/// Read a tag name, consuming hyphens and subsequent idents to build
+/// hyphenated names like `counter-app` or `zig-counter`.
+fn read_tag_name(tokens: &[TokenTree], i: &mut usize) -> String {
+    let mut name = expect_ident(tokens, i);
+    while *i < tokens.len() && is_punct(&tokens[*i], '-') {
+        *i += 1; // skip '-'
+        name.push('-');
+        name.push_str(&expect_ident(tokens, i));
+    }
+    name
+}
+
 fn parse(input: TokenStream) -> Vec<Inst> {
     let tokens: Vec<TokenTree> = input.into_iter().collect();
     let mut i = 0;
@@ -75,49 +89,69 @@ fn parse(input: TokenStream) -> Vec<Inst> {
         if is_punct(&tokens[i], '<') {
             i += 1;
 
-            // Closing tag: </tag>
+            // Closing tag: </tag> or </tag-name>
             if i < tokens.len() && is_punct(&tokens[i], '/') {
                 i += 1;
-                let _tag = expect_ident(&tokens, &mut i);
+                let tag = read_tag_name(&tokens, &mut i);
                 expect_punct(&tokens, &mut i, '>');
-                out.push(Inst::Close);
+                // Component close tags are no-ops (component was emitted on open)
+                if !tag.contains('-') {
+                    out.push(Inst::Close);
+                }
                 continue;
             }
 
-            // Opening tag: <tag ...> or <tag .../>
-            let tag = expect_ident(&tokens, &mut i);
-            out.push(Inst::Open(tag));
+            // Opening tag
+            let tag = read_tag_name(&tokens, &mut i);
+            let is_component = tag.contains('-');
 
-            // Attributes
-            loop {
-                if i >= tokens.len() {
-                    break;
-                }
-                if is_punct(&tokens[i], '>') {
+            if is_component {
+                out.push(Inst::Component(tag));
+                // Skip to end of tag (no attributes for components)
+                while i < tokens.len() && !is_punct(&tokens[i], '>') {
+                    if is_punct(&tokens[i], '/') {
+                        i += 1;
+                        break;
+                    }
                     i += 1;
-                    break;
                 }
-                if is_punct(&tokens[i], '/') {
+                if i < tokens.len() && is_punct(&tokens[i], '>') {
                     i += 1;
-                    expect_punct(&tokens, &mut i, '>');
-                    out.push(Inst::Close);
-                    break;
                 }
+            } else {
+                out.push(Inst::Open(tag));
 
-                let name = expect_ident(&tokens, &mut i);
+                // Attributes
+                loop {
+                    if i >= tokens.len() {
+                        break;
+                    }
+                    if is_punct(&tokens[i], '>') {
+                        i += 1;
+                        break;
+                    }
+                    if is_punct(&tokens[i], '/') {
+                        i += 1;
+                        expect_punct(&tokens, &mut i, '>');
+                        out.push(Inst::Close);
+                        break;
+                    }
 
-                // on:event="handler"
-                if name == "on" && i < tokens.len() && is_punct(&tokens[i], ':') {
-                    i += 1;
-                    let event_type = expect_ident(&tokens, &mut i);
-                    expect_punct(&tokens, &mut i, '=');
-                    let handler = expect_string(&tokens, &mut i);
-                    out.push(Inst::Event(event_type, handler));
-                } else {
-                    // Regular attribute: name="value"
-                    expect_punct(&tokens, &mut i, '=');
-                    let value = expect_string(&tokens, &mut i);
-                    out.push(Inst::Attr(name, value));
+                    let name = expect_ident(&tokens, &mut i);
+
+                    // on:event="handler"
+                    if name == "on" && i < tokens.len() && is_punct(&tokens[i], ':') {
+                        i += 1;
+                        let event_type = expect_ident(&tokens, &mut i);
+                        expect_punct(&tokens, &mut i, '=');
+                        let handler = expect_string(&tokens, &mut i);
+                        out.push(Inst::Event(event_type, handler));
+                    } else {
+                        // Regular attribute: name="value"
+                        expect_punct(&tokens, &mut i, '=');
+                        let value = expect_string(&tokens, &mut i);
+                        out.push(Inst::Attr(name, value));
+                    }
                 }
             }
         } else if let TokenTree::Literal(lit) = &tokens[i] {
@@ -195,23 +229,40 @@ fn generate(instrs: &[Inst]) -> TokenStream {
                 slot_idx += 1;
                 pos += 3;
             }
+            Inst::Component(name) => {
+                first += &format!(
+                    "*b.add({}) = 7; *b.add({}) = b\"{}\".as_ptr() as u32; *b.add({}) = {};\n",
+                    pos, pos + 1, name, pos + 2, name.len()
+                );
+                pos += 3;
+            }
         }
     }
     first += &format!("*b.add({}) = 0;\n", pos);
 
-    // Subsequent renders: slot opcodes only
+    // Subsequent renders: slot + component opcodes only
     let mut subsequent = String::new();
     let mut slot_idx = 0;
     let mut spos = 0;
     for inst in instrs {
-        if let Inst::Slot(expr) = inst {
-            subsequent += &format!(
-                "{{ let (__p, __l) = ({}).write_slot(&mut (*__sbufs)[{}]); \
-                   *b.add({}) = 5; *b.add({}) = __p; *b.add({}) = __l; }}\n",
-                expr, slot_idx, spos, spos + 1, spos + 2
-            );
-            slot_idx += 1;
-            spos += 3;
+        match inst {
+            Inst::Slot(expr) => {
+                subsequent += &format!(
+                    "{{ let (__p, __l) = ({}).write_slot(&mut (*__sbufs)[{}]); \
+                       *b.add({}) = 5; *b.add({}) = __p; *b.add({}) = __l; }}\n",
+                    expr, slot_idx, spos, spos + 1, spos + 2
+                );
+                slot_idx += 1;
+                spos += 3;
+            }
+            Inst::Component(name) => {
+                subsequent += &format!(
+                    "*b.add({}) = 7; *b.add({}) = b\"{}\".as_ptr() as u32; *b.add({}) = {};\n",
+                    spos, spos + 1, name, spos + 2, name.len()
+                );
+                spos += 3;
+            }
+            _ => {}
         }
     }
     subsequent += &format!("*b.add({}) = 0;\n", spos);

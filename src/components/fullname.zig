@@ -15,6 +15,7 @@ export fn on_last() void {
 
 const view = dom.html(
     \\<div class='fullname'>
+    \\  <h2>Full Name</h2>
     \\  <input on:input='on_first' placeholder='First'/>
     \\  <input on:input='on_last' placeholder='Last'/>
     \\  <p class='result'>{}</p>
