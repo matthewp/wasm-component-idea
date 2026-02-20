@@ -36,4 +36,28 @@ variant opcode {
 - `rust-counter-app/` — Rust parent component (counter-app world, composes children)
 - `plugins/vite-plugin-zig.js` — Zig build plugin (zig → embed → new → jco transpile)
 - `plugins/vite-plugin-rust.js` — Rust build plugin (cargo → embed → new → jco transpile)
+- `rust-bench/` — Rust benchmark component for js-framework-benchmark
+- `js-framework-benchmark/` — Fork of the benchmark suite (git submodule)
 - `build.sh` — Standalone build script for all components and composition
+- `design/optimizations.md` — Benchmark results and optimization tracking
+
+## Running Benchmarks
+
+```bash
+# 1. Build the benchmark component (compiles Rust, embeds WIT, transpiles with jco, copies runtime)
+cd js-framework-benchmark/frameworks/non-keyed/wasm-component-protocol
+bash build-prod.sh
+
+# 2. Start the benchmark server (leave running in background)
+cd js-framework-benchmark
+npm start
+
+# 3. Run benchmarks (in another terminal, from js-framework-benchmark/)
+cd js-framework-benchmark/webdriver-ts
+LANG="en_US.UTF-8" node dist/benchmarkRunner.js --framework non-keyed/wasm-component-protocol --chromeBinary /usr/bin/chromium
+
+# Run against vanillajs for comparison
+LANG="en_US.UTF-8" node dist/benchmarkRunner.js --framework non-keyed/vanillajs --chromeBinary /usr/bin/chromium
+```
+
+Results are written to `js-framework-benchmark/webdriver-ts/results/`.

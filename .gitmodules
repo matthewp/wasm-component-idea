@@ -1,0 +1,3 @@
+[submodule "js-framework-benchmark"]
+	path = js-framework-benchmark
+	url = git@github.com:matthewp/js-framework-benchmark-wasm-protocol.git
