@@ -1,6 +1,13 @@
 package wasm-components:dom@0.1.0;
 
 interface types {
+    variant prop-value {
+        int(s32),
+        str(string),
+        boolean(bool),
+        float(f64),
+    }
+
     variant opcode {
         open(string),
         close,
@@ -9,17 +16,21 @@ interface types {
         slot(string),
         event(tuple<string, string>),
         child(string),
+        prop(tuple<string, prop-value>),
+        attr-slot(tuple<string, string>),
+        begin(string),
+        end,
     }
 }
 
 interface renderer {
-    use types.{opcode};
-    render: func() -> list<opcode>;
+    use types.{opcode, prop-value};
+    render: func(props: list<tuple<string, prop-value>>) -> list<opcode>;
     handle-event: func(handler: string);
 }
 
 interface host {
-    event-target-value: func() -> string;
+    event-query: func(path: string) -> string;
 }
 
 world leaf-component {
@@ -28,31 +39,5 @@ world leaf-component {
 }
 
 world pure-component {
-    export renderer;
-}
-
-interface zig-child {
-    use types.{opcode};
-    render: func() -> list<opcode>;
-    handle-event: func(handler: string);
-}
-
-interface rust-child {
-    use types.{opcode};
-    render: func() -> list<opcode>;
-    handle-event: func(handler: string);
-}
-
-world zig-counter {
-    export zig-child;
-}
-
-world rust-counter {
-    export rust-child;
-}
-
-world counter-app {
-    import zig-child;
-    import rust-child;
     export renderer;
 }

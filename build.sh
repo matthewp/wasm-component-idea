@@ -38,4 +38,13 @@ wasm-tools component embed wit/ --world pure-component \
 wasm-tools component new test/counter-app.embedded.wasm -o test/counter-app.component.wasm
 npx jco transpile test/counter-app.component.wasm -o dist/counter-app/ --name counter-app --no-nodejs-compat -q
 
+echo "Building Rust todo..."
+(cd rust-todo && cargo build --target wasm32-unknown-unknown --release 2>&1)
+~/.cargo/bin/wasm-tools component embed wit/ --world leaf-component \
+  rust-todo/target/wasm32-unknown-unknown/release/rust_todo.wasm \
+  -o test/rust-todo.embedded.wasm --encoding utf8
+~/.cargo/bin/wasm-tools component new test/rust-todo.embedded.wasm -o test/rust-todo.component.wasm
+npx jco transpile test/rust-todo.component.wasm -o dist/rust-todo/ --name rust-todo --no-nodejs-compat -q \
+  -M 'wasm-components:dom/host@0.1.0=../../src/host.js'
+
 echo "Done!"

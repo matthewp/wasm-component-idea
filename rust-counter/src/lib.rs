@@ -3,7 +3,7 @@ wit_bindgen::generate!({
     world: "pure-component",
 });
 
-use exports::wasm_components::dom::renderer::{Guest, Opcode};
+use exports::wasm_components::dom::renderer::{Guest, Opcode, PropValue};
 use wasm_html_macro::html;
 
 struct Counter;
@@ -11,7 +11,7 @@ struct Counter;
 static mut COUNT: i32 = 0;
 
 impl Guest for Counter {
-    fn render() -> Vec<Opcode> {
+    fn render(_props: Vec<(String, PropValue)>) -> Vec<Opcode> {
         let count = unsafe { COUNT };
         let count_str = format_i32(count);
 

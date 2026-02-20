@@ -2,6 +2,7 @@ const std = @import("std");
 const dom = @import("dom.zig");
 
 var count: i32 = 0;
+var initialized: bool = false;
 
 fn on_decrement() void {
     if (count > 0) count -= 1;
@@ -18,12 +19,19 @@ const view = dom.html(
     \\</div>
 );
 
-fn render() dom.OpcodeList {
+pub fn render(props: []const dom.Prop) dom.OpcodeList {
+    if (!initialized) {
+        initialized = true;
+        for (props) |prop| {
+            if (std.mem.eql(u8, prop.key(), "initial") and prop.disc == 0) {
+                count = prop.int();
+            }
+        }
+    }
     return view.update(.{count});
 }
 
-fn handleEvent(name_ptr: [*]const u8, name_len: u32) void {
-    const name = name_ptr[0..name_len];
+pub fn handleEvent(name: []const u8) void {
     if (std.mem.eql(u8, name, "on_decrement")) {
         on_decrement();
     } else if (std.mem.eql(u8, name, "on_increment")) {
@@ -31,17 +39,6 @@ fn handleEvent(name_ptr: [*]const u8, name_len: u32) void {
     }
 }
 
-// --- Canonical ABI exports ---
-
-export fn @"wasm-components:dom/renderer@0.1.0#render"() [*]u8 {
-    return dom.renderExport(render());
-}
-
-export fn @"wasm-components:dom/renderer@0.1.0#handle-event"(name_ptr: [*]const u8, name_len: u32) void {
-    dom.resetHeap();
-    handleEvent(name_ptr, name_len);
-}
-
-export fn @"cabi_post_wasm-components:dom/renderer@0.1.0#render"(_: [*]u8) void {
-    // Static memory — nothing to free
+comptime {
+    dom.exportRenderer(@This());
 }

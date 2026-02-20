@@ -1,21 +1,26 @@
 const std = @import("std");
 
 // --- Canonical ABI opcode layout ---
-// Each opcode is 20 bytes (5 x u32), matching the WIT variant:
-//   variant opcode { open(string), close, attr(tuple<string,string>),
-//                    text(string), slot(string), event(tuple<string,string>) }
+// Each opcode is 32 bytes, matching the WIT variant (prop-value contains
+// f64 which forces 8-byte alignment → 1 disc + 7 pad + 24 payload = 32).
 //
-// Layout: [tag:u8][pad:3][f0_ptr:u32][f0_len:u32][f1_ptr:u32][f1_len:u32]
+// Layout: [tag:u8][pad:7][f0_ptr:u32][f0_len:u32][f1_ptr:u32][f1_len:u32][reserved:8]
 
 pub const Opcode = extern struct {
     tag: u8,
     _pad1: u8 = 0,
     _pad2: u8 = 0,
     _pad3: u8 = 0,
+    _pad4: u8 = 0,
+    _pad5: u8 = 0,
+    _pad6: u8 = 0,
+    _pad7: u8 = 0,
     f0_ptr: u32 = 0,
     f0_len: u32 = 0,
     f1_ptr: u32 = 0,
     f1_len: u32 = 0,
+    _reserved1: u32 = 0,
+    _reserved2: u32 = 0,
 };
 
 pub const OP_OPEN: u8 = 0;
@@ -25,6 +30,10 @@ pub const OP_TEXT: u8 = 3;
 pub const OP_SLOT: u8 = 4;
 pub const OP_EVENT: u8 = 5;
 pub const OP_CHILD: u8 = 6;
+pub const OP_PROP: u8 = 7;
+pub const OP_ATTR_SLOT: u8 = 8;
+pub const OP_BEGIN: u8 = 9;
+pub const OP_END: u8 = 10;
 
 // --- Comptime HTML parser ---
 
@@ -274,23 +283,61 @@ pub const OpcodeList = struct {
     len: usize,
 };
 
+// --- Canonical ABI prop layout ---
+// prop-value variant: disc(u8) + 7 pad + 8 payload
+// tuple<string, prop-value>: key_ptr(4) + key_len(4) + prop-value(16) = 24 bytes
+// Discriminants: 0=int, 1=str, 2=boolean, 3=float
+
+pub const Prop = extern struct {
+    key_ptr: u32,
+    key_len: u32,
+    disc: u8,
+    _pad: [7]u8,
+    payload_lo: u32,
+    payload_hi: u32,
+
+    pub fn key(self: Prop) []const u8 {
+        return @as([*]const u8, @ptrFromInt(self.key_ptr))[0..self.key_len];
+    }
+
+    pub fn int(self: Prop) i32 {
+        return @bitCast(self.payload_lo);
+    }
+};
+
+// --- Canonical ABI export generator ---
+
+pub fn exportRenderer(comptime Component: type) void {
+    const cc: std.builtin.CallingConvention = .{ .wasm_mvp = .{} };
+    const wrap = struct {
+        fn render(props_ptr: [*]const Prop, props_len: u32) callconv(cc) [*]u8 {
+            return renderExport(Component.render(props_ptr[0..props_len]));
+        }
+        fn handleEvent(name_ptr: [*]const u8, name_len: u32) callconv(cc) void {
+            resetHeap();
+            Component.handleEvent(name_ptr[0..name_len]);
+        }
+        fn post(_: [*]u8) callconv(cc) void {}
+    };
+    @export(&wrap.render, .{ .name = "wasm-components:dom/renderer@0.1.0#render" });
+    @export(&wrap.handleEvent, .{ .name = "wasm-components:dom/renderer@0.1.0#handle-event" });
+    @export(&wrap.post, .{ .name = "cabi_post_wasm-components:dom/renderer@0.1.0#render" });
+}
+
 // --- Canonical ABI helpers ---
 
 var ret_area: [2]u32 align(4) = undefined;
 
-/// Wrap a render function for canonical ABI export.
-/// Returns a pointer to ret_area containing [list_ptr, list_len].
-pub fn renderExport(result: OpcodeList) [*]u8 {
+fn renderExport(result: OpcodeList) [*]u8 {
     ret_area[0] = @intFromPtr(result.ptr);
     ret_area[1] = @intCast(result.len);
     return @ptrCast(&ret_area);
 }
 
-// Bump allocator for cabi_realloc (host-provided string parameters)
 var heap: [4096]u8 = undefined;
 var heap_pos: usize = 0;
 
-pub fn resetHeap() void {
+fn resetHeap() void {
     heap_pos = 0;
 }
 

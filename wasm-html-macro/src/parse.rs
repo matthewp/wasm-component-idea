@@ -1,6 +1,11 @@
 use proc_macro2::{Delimiter, TokenStream, TokenTree};
 use syn::{Expr, LitStr};
 
+pub enum PropValue {
+    Str(String),
+    Expr(Expr),
+}
+
 pub enum Node {
     Open(String),
     Close,
@@ -9,6 +14,10 @@ pub enum Node {
     Text(String),
     Slot(Expr),
     Child(String),
+    Prop { name: String, value: PropValue },
+    DynAttr { name: String, value: Expr },
+    Begin(String),
+    End,
 }
 
 pub fn parse(input: TokenStream) -> Vec<Node> {
@@ -41,9 +50,36 @@ pub fn parse(input: TokenStream) -> Vec<Node> {
 
                 // PascalCase tag names are child components: <ZigChild /> → child("zig-child")
                 if tag.starts_with(|c: char| c.is_uppercase()) {
-                    expect_punct(&tokens, &mut pos, '/');
-                    expect_punct(&tokens, &mut pos, '>');
                     nodes.push(Node::Child(pascal_to_kebab(&tag)));
+                    // Parse props until `/>`
+                    loop {
+                        match &tokens[pos] {
+                            TokenTree::Punct(p) if p.as_char() == '/' => {
+                                pos += 1;
+                                expect_punct(&tokens, &mut pos, '>');
+                                break;
+                            }
+                            TokenTree::Ident(_) => {
+                                let name = ident_string(&tokens[pos]);
+                                pos += 1;
+                                expect_punct(&tokens, &mut pos, '=');
+                                // Value: "string" or {expr}
+                                match &tokens[pos] {
+                                    TokenTree::Group(g) if g.delimiter() == Delimiter::Brace => {
+                                        let expr: Expr = syn::parse2(g.stream())
+                                            .expect("html!: expected expression inside { }");
+                                        nodes.push(Node::Prop { name, value: PropValue::Expr(expr) });
+                                        pos += 1;
+                                    }
+                                    _ => {
+                                        let value = consume_string_literal(&tokens, &mut pos);
+                                        nodes.push(Node::Prop { name, value: PropValue::Str(value) });
+                                    }
+                                }
+                            }
+                            _ => panic!("html!: unexpected token in child props: {:?}", tokens[pos]),
+                        }
+                    }
                     continue;
                 }
 
@@ -88,10 +124,20 @@ pub fn parse(input: TokenStream) -> Vec<Node> {
                                 }
                             }
 
-                            // Regular attribute: name="value"
+                            // Regular attribute: name="value" or name={expr}
                             expect_punct(&tokens, &mut pos, '=');
-                            let value = consume_string_literal(&tokens, &mut pos);
-                            nodes.push(Node::Attr { name, value });
+                            match &tokens[pos] {
+                                TokenTree::Group(g) if g.delimiter() == Delimiter::Brace => {
+                                    let expr: Expr = syn::parse2(g.stream())
+                                        .expect("html!: expected expression inside { }");
+                                    nodes.push(Node::DynAttr { name, value: expr });
+                                    pos += 1;
+                                }
+                                _ => {
+                                    let value = consume_string_literal(&tokens, &mut pos);
+                                    nodes.push(Node::Attr { name, value });
+                                }
+                            }
                         }
                         _ => {
                             panic!(

@@ -17,6 +17,19 @@
       border: 2px solid #646cff;
       border-radius: 8px;
       padding: 1.5rem;
+      transition: background-color 0.2s, color 0.2s;
+    }
+    .counter-app.dark {
+      background-color: #1a1a2e;
+      color: #e0e0e0;
+    }
+    .counter-app.dark button {
+      color: #e0e0e0;
+      border-color: #646cff;
+    }
+    .counter-app.dark button:hover {
+      background: #646cff;
+      color: white;
     }
     .counter-app h2 { margin-top: 0; }
     .counter {
@@ -67,6 +80,48 @@
       margin: 0;
       font-size: 1.25rem;
       min-height: 1.5em;
+    }
+    .todo-app {
+      margin-top: 2rem;
+      border: 2px solid #646cff;
+      border-radius: 8px;
+      padding: 1.5rem;
+    }
+    .todo-app h2 { margin-top: 0; }
+    .todo-input {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+    }
+    .todo-input input {
+      flex: 1;
+      padding: 0.4rem 0.6rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 1rem;
+    }
+    .todo-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    .todo-list li {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.5rem 0;
+      border-bottom: 1px solid #eee;
+    }
+    .todo-list li .delete {
+      background: none;
+      border: none;
+      color: #e53e3e;
+      font-size: 1.25rem;
+      cursor: pointer;
+      padding: 0 0.5rem;
+    }
+    .todo-list li .delete:hover {
+      color: #c53030;
     }
   </style>
 </head>
