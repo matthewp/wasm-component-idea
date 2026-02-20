@@ -21,6 +21,15 @@ import { setCurrentEvent } from './host.js';
 
 const PROP_ATTRS = new Set(['value', 'checked', 'selected']);
 
+function dfsCollect(node, list) {
+  list.push(node);
+  let child = node.firstChild;
+  while (child) {
+    dfsCollect(child, list);
+    child = child.nextSibling;
+  }
+}
+
 export function createHost(container) {
   const components = [];
 
@@ -108,6 +117,9 @@ export function createHost(container) {
             setCurrentEvent(null);
             renderComponent(comp);
           });
+          if (currentInstance) {
+            currentInstance._events.push({ element, type: eventType, handler: handlerName });
+          }
           break;
         }
         case 'attr-slot': {
@@ -161,6 +173,7 @@ export function createHost(container) {
             startMarker,
             endMarker: null,
             parts: [],
+            _events: [],
             _insertBefore: true,
           };
           // Push group parent onto stack so DOM builds inside the group's parent
@@ -177,6 +190,10 @@ export function createHost(container) {
           current.insertBefore(endMarker, currentGroup.sentinel);
           currentInstance.endMarker = endMarker;
           currentGroup.instances.push(currentInstance);
+          // Cache template after first instance
+          if (currentGroup.instances.length === 1) {
+            cacheGroupTemplate(currentGroup);
+          }
           currentInstance = null;
           break;
         }
@@ -211,11 +228,15 @@ export function createHost(container) {
         // Top-level opcode processing
         switch (op.tag) {
           case 'open': {
-            domStack.push(comp.staticElements[staticElIdx++]);
+            if (staticElIdx < comp.staticElements.length) {
+              domStack.push(comp.staticElements[staticElIdx++]);
+            }
             break;
           }
           case 'close': {
-            domStack.pop();
+            if (domStack.length > 1) {
+              domStack.pop();
+            }
             break;
           }
           case 'slot': {
@@ -261,6 +282,12 @@ export function createHost(container) {
               reusing = true;
               building = false;
               partIdx = 0;
+            } else if (currentGroup.template) {
+              // Clone from cached template, then update parts
+              cloneFromTemplate(currentGroup, comp);
+              reusing = true;
+              building = false;
+              partIdx = 0;
             } else {
               // Build new instance
               reusing = false;
@@ -272,6 +299,7 @@ export function createHost(container) {
                 startMarker,
                 endMarker: null,
                 parts: [],
+                _events: [],
               };
               buildStack = [];
               buildCurrent = parent;
@@ -292,6 +320,10 @@ export function createHost(container) {
               currentGroup.parent.insertBefore(endMarker, currentGroup.sentinel);
               buildInstance.endMarker = endMarker;
               currentGroup.instances.push(buildInstance);
+              // Cache template after first instance
+              if (currentGroup.instances.length === 1) {
+                cacheGroupTemplate(currentGroup);
+              }
               buildInstance = null;
               building = false;
             }
@@ -308,6 +340,11 @@ export function createHost(container) {
                 reusing = true;
                 building = false;
                 partIdx = 0;
+              } else if (currentGroup.template) {
+                cloneFromTemplate(currentGroup, comp);
+                reusing = true;
+                building = false;
+                partIdx = 0;
               } else {
                 reusing = false;
                 building = true;
@@ -318,6 +355,7 @@ export function createHost(container) {
                   startMarker,
                   endMarker: null,
                   parts: [],
+                  _events: [],
                 };
                 buildStack = [];
                 buildCurrent = parent;
@@ -416,6 +454,7 @@ export function createHost(container) {
                 setCurrentEvent(null);
                 renderComponent(comp);
               });
+              buildInstance._events.push({ element: buildElement, type: eventType, handler: handlerName });
             }
             break;
           }
@@ -436,6 +475,69 @@ export function createHost(container) {
       trimGroup(comp.groups[groupIdx], 0);
       groupIdx++;
     }
+  }
+
+  function cacheGroupTemplate(group) {
+    const inst = group.instances[0];
+    const tmpl = document.createElement('template');
+    let node = inst.startMarker.nextSibling;
+    while (node && node !== inst.endMarker) {
+      tmpl.content.appendChild(node.cloneNode(true));
+      node = node.nextSibling;
+    }
+    const origNodes = [];
+    node = inst.startMarker.nextSibling;
+    while (node && node !== inst.endMarker) {
+      dfsCollect(node, origNodes);
+      node = node.nextSibling;
+    }
+    const partMap = inst.parts.map(part => {
+      const target = part.type === 'slot' ? part.node : part.element;
+      const idx = origNodes.indexOf(target);
+      return { type: part.type, nodeIdx: idx, name: part.name };
+    });
+    const eventMap = (inst._events || []).map(ev => {
+      const idx = origNodes.indexOf(ev.element);
+      return { nodeIdx: idx, type: ev.type, handler: ev.handler };
+    });
+    group.template = { el: tmpl, partMap, eventMap };
+  }
+
+  function cloneFromTemplate(group, comp) {
+    const { el: tmpl, partMap, eventMap } = group.template;
+    const clone = tmpl.content.cloneNode(true);
+    const cloneNodes = [];
+    let child = clone.firstChild;
+    while (child) {
+      dfsCollect(child, cloneNodes);
+      child = child.nextSibling;
+    }
+    const startMarker = document.createComment('begin:' + group.templateId);
+    const endMarker = document.createComment('end');
+    const parent = group.parent;
+    parent.insertBefore(startMarker, group.sentinel);
+    parent.insertBefore(clone, group.sentinel);
+    parent.insertBefore(endMarker, group.sentinel);
+    const parts = partMap.map(pm => {
+      const node = cloneNodes[pm.nodeIdx];
+      if (pm.type === 'slot') {
+        return { type: 'slot', node };
+      } else {
+        return { type: 'attr-slot', element: node, name: pm.name };
+      }
+    });
+    for (const em of eventMap) {
+      const el = cloneNodes[em.nodeIdx];
+      el.addEventListener(em.type, (e) => {
+        setCurrentEvent(e);
+        comp.renderer.handleEvent(em.handler);
+        setCurrentEvent(null);
+        renderComponent(comp);
+      });
+    }
+    const inst = { startMarker, endMarker, parts, _events: [] };
+    group.instances.push(inst);
+    return inst;
   }
 
   function trimGroup(group, keepCount) {
