@@ -1,4 +1,4 @@
-import { createHost } from './runtime.js';
+import { createHost } from '../src/runtime.js';
 import initCallback from './components/bench-callback.zig';
 import initBuffer from './components/bench-buffer.zig';
 

@@ -1,7 +1,8 @@
 node_modules/
-dist/
+js-framework-benchmark/
+examples/dist/
 target/
-wasm-html-macro/target/
+examples/components/wasm-html-macro/target/
 src/bindings/
 test/*.wasm
 test/*-out/

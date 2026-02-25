@@ -29,16 +29,25 @@ variant opcode {
 
 - `wit/dom.wit` — WIT interface definitions (types, renderer, host, child interfaces, worlds)
 - `src/runtime.js` — Host runtime that processes structured JS opcode objects from jco
-- `src/components/dom.zig` — Comptime HTML parser producing canonical ABI opcode structs
-- `src/components/*.zig` — Zig components
-- `rust-counter/` — Rust standalone counter (pure-component world)
-- `rust-counter-child/` — Rust child counter (rust-counter world, for composition)
-- `rust-counter-app/` — Rust parent component (counter-app world, composes children)
+- `src/host.js` — Host function implementations for leaf components
 - `plugins/vite-plugin-zig.js` — Zig build plugin (zig → embed → new → jco transpile)
 - `plugins/vite-plugin-rust.js` — Rust build plugin (cargo → embed → new → jco transpile)
-- `rust-bench/` — Rust benchmark component for js-framework-benchmark
+- `examples/` — Demo app and all example components
+  - `index.html` — Main demo page
+  - `bench.html` — Benchmark page
+  - `main.js` — Demo app entry point
+  - `bench.js` — Benchmark entry point
+  - `build.sh` — Standalone build script for all components
+  - `dist/` — Build output (not tracked)
+  - `components/zig-counter/` — Zig counter (dom.zig comptime HTML parser + counter.zig)
+  - `components/scheme-counter/` — Scheme counter
+  - `components/rust-counter/` — Rust standalone counter (pure-component world)
+  - `components/rust-counter-child/` — Rust child counter (rust-counter world, for composition)
+  - `components/rust-counter-app/` — Rust parent component (counter-app world, composes children)
+  - `components/rust-todo/` — Rust todo app (leaf-component world)
+  - `components/rust-bench/` — Rust benchmark component for js-framework-benchmark
+  - `components/wasm-html-macro/` — Proc macro for HTML-in-Rust syntax
 - `js-framework-benchmark/` — Fork of the benchmark suite (git submodule)
-- `build.sh` — Standalone build script for all components and composition
 - `design/optimizations.md` — Benchmark results and optimization tracking
 
 ## Running Benchmarks

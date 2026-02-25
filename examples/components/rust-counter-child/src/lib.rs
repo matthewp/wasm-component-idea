@@ -1,9 +1,9 @@
 wit_bindgen::generate!({
-    path: "../wit",
-    world: "pure-component",
+    path: "../../../wit",
+    world: "rust-counter",
 });
 
-use exports::wasm_components::dom::renderer::{Guest, Opcode, PropValue};
+use exports::wasm_components::dom::rust_child::{Guest, Opcode};
 use wasm_html_macro::html;
 
 struct Counter;
@@ -11,7 +11,7 @@ struct Counter;
 static mut COUNT: i32 = 0;
 
 impl Guest for Counter {
-    fn render(_props: Vec<(String, PropValue)>) -> Vec<Opcode> {
+    fn render() -> Vec<Opcode> {
         let count = unsafe { COUNT };
         let count_str = format_i32(count);
 
@@ -27,9 +27,7 @@ impl Guest for Counter {
     fn handle_event(handler: String) {
         match handler.as_str() {
             "on_decrement" => unsafe {
-                if COUNT > 0 {
-                    COUNT -= 1;
-                }
+                if COUNT > 0 { COUNT -= 1; }
             },
             "on_increment" => unsafe {
                 COUNT += 1;
@@ -40,9 +38,7 @@ impl Guest for Counter {
 }
 
 fn format_i32(n: i32) -> String {
-    if n == 0 {
-        return "0".into();
-    }
+    if n == 0 { return "0".into(); }
     let mut v = if n < 0 { (-n) as u32 } else { n as u32 };
     let mut buf = [0u8; 11];
     let mut pos = buf.len();
@@ -51,11 +47,7 @@ fn format_i32(n: i32) -> String {
         buf[pos] = b'0' + (v % 10) as u8;
         v /= 10;
     }
-    if n < 0 {
-        pos -= 1;
-        buf[pos] = b'-';
-    }
-    // Safety: we only put ASCII bytes
+    if n < 0 { pos -= 1; buf[pos] = b'-'; }
     unsafe { core::str::from_utf8_unchecked(&buf[pos..]).to_string() }
 }
 
